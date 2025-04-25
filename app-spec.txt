@@ -1,0 +1,36 @@
+The app will scan LVM and build a database of all LVM info.
+ 
+The app will use lsblk to list all of the disk block devices in the system and  build a full database of all block device info
+
+Create a curses box on the left side of the screen.
+inside this curses box display a verticle tabular list of all the block devices discovered
+
+Disk block device info
+The tabular list displays
+- the block device name
+- the device TYPE
+- the capacity size of the block device using format KiB, MiB, GiB, TiB
+- the disk partition type (non if it has no partition info)
+
+If the user presses up arrow or down arrow, the main cursor will move up/down the tabular list
+
+For each block device selected, display LVM deails if the device is being used by LVM
+
+LVM VG Info
+show the Volume Group info first
+- Volume Group name as a header with the sze after the name (size) in KiB, MiB, GiB, TiB
+then a tabular list of key info
+- Format info
+- Currnet Logical volumes in the Volume Group
+
+LVM LV info
+Include Logical Volume info
+- All Logical Volumes within this Volume Group
+- The size of eah Logical volume in KiB, MiB, GiB, TiB
+- the list of Physical Volumes within each Logical Volume
+ 
+LVM PV info
+Include Physical Volume info
+- All Physcial Volumes wihtin this Volume Group
+- The size of each Physical Volumes in KiB, MiB, GiB, TiB
+- Free space
