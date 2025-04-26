@@ -35,10 +35,17 @@ def load_data():
     bs = run_cmd(['lsblk', '-b', '-O', '-J'])
     raw_devices = bs.get('blockdevices', []) if bs else []
     devices = []
+    seen_paths = set()  # Track unique device paths
+    
     def dfs(dev):
-        devices.append(dev)
+        # Use path if available, otherwise use name
+        path = dev.get('path') or dev.get('name', '')
+        if path and path not in seen_paths:
+            seen_paths.add(path)
+            devices.append(dev)
         for child in dev.get('children', []):
             dfs(child)
+            
     for d in raw_devices:
         dfs(d)
     pvs_json = run_cmd([
@@ -132,7 +139,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             lv_names = [lv.get('lv_name') for lv in lvs_in_vg]
             right.addstr(2, 2, f"Format: {fmt}")
             right.addstr(3, 2, f"Logical Volumes: {', '.join(lv_names) if lv_names else 'none'}")
-            right.addstr(5, 2, "Logical Volumes:", curses.A_BOLD)
+            right.addstr(5, 2, "[  Logical Volumes  ]", curses.A_BOLD)
             y = 6
             # Group Logical Volumes by name
             lv_groups = {}
