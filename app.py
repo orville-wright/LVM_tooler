@@ -37,11 +37,52 @@ def load_data():
     devices = []
     seen_paths = set()  # Track unique device paths
     
+    # Get mount point and capacity information using df command
+    df_info = {}
+    try:
+        df_output = subprocess.run(
+            ['df', '--output=source,size,used,avail,pcent,target'],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+        
+        # Parse df output (skip header)
+        for line in df_output.split('\n')[1:]:
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            
+            source = parts[0]
+            size_blocks = parts[1]
+            used_blocks = parts[2]
+            avail_blocks = parts[3]
+            use_percent = parts[4].replace('%', '')
+            mount_point = ' '.join(parts[5:])  # Handle mount points with spaces
+            
+            df_info[source] = {
+                'mount_point': mount_point,
+                'used': format_size(int(used_blocks) * 1024),  # Convert 1K blocks to bytes
+                'avail': format_size(int(avail_blocks) * 1024)  # Convert 1K blocks to bytes
+            }
+    except Exception as e:
+        # If df command fails, continue without mount information
+        pass
+    
     def dfs(dev):
         # Use path if available, otherwise use name
         path = dev.get('path') or dev.get('name', '')
         if path and path not in seen_paths:
             seen_paths.add(path)
+            
+            # Add mount point and capacity information if available
+            if path in df_info:
+                dev['mount_point'] = df_info[path]['mount_point']
+                dev['used'] = df_info[path]['used']
+                dev['avail'] = df_info[path]['avail']
+            else:
+                dev['mount_point'] = 'N/A'
+                dev['used'] = 'N/A'
+                dev['avail'] = 'N/A'
+                
             devices.append(dev)
         for child in dev.get('children', []):
             dfs(child)
@@ -100,7 +141,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     break
                 continue
                 
-            left_w = max(40, w // 3)
+            # Increase left panel width to accommodate new columns
+            left_w = max(70, w // 2)
             
             # Calculate heights for the three panels
             vg_height = h // 2
@@ -110,7 +152,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             left = stdscr.derwin(h, left_w, 0, 0)
             left.box()
             left.addstr(0, 2, " Block Devices ")
-            header = "{:<15} {:<8} {:>10} {:<8}".format("Name", "Type", "Size", "PTType")
+            header = "{:<15} {:<8} {:>10} {:<8} {:<15} {:>8} {:>8}".format(
+                "Name", "Type", "Size", "PTType", "Mount", "Used", "Avail")
             left.addstr(1, 1, header, curses.A_BOLD)
             for idx, dev in enumerate(devices):
                 if idx >= h - 3:
@@ -122,12 +165,24 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     dtype = dev.get('type', '')
                     size = format_size(dev.get('size'))
                     ptype = dev.get('pttype') or 'none'
+                    mount = dev.get('mount_point', 'N/A')
+                    used = dev.get('used', 'N/A')
+                    avail = dev.get('avail', 'N/A')
+                    
+                    # Truncate mount point if too long to prevent display issues
+                    if len(mount) > 15:
+                        mount = mount[:12] + "..."
                 else:
                     name = dev
                     dtype = ''
                     size = 'N/A'
                     ptype = 'none'
-                line = "{:<15} {:<8} {:>10} {:<8}".format(name, dtype, size, ptype)
+                    mount = 'N/A'
+                    used = 'N/A'
+                    avail = 'N/A'
+                
+                line = "{:<15} {:<8} {:>10} {:<8} {:<15} {:>8} {:>8}".format(
+                    name, dtype, size, ptype, mount, used, avail)
                 attr = curses.color_pair(1) if idx == current else curses.A_NORMAL
                 left.addstr(idx + 2, 1, line, attr)
 
@@ -181,7 +236,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     # Ensure we don't write outside window boundaries
                     if y >= vg_height - 2:
                         break
-                    right.addstr(y, 4, "{:<10} {:<10} {:>10} {}".format("PE Start", "PE End", "Size", "PVs"), curses.A_UNDERLINE)
+                    right.addstr(y, 4, "{:<10} {:<10} {:>10} {:<20} {}".format("LE Start", "LE End", "Size", "PVs", "PE Start"), curses.A_UNDERLINE)
                     y += 1
                     for lv in group:
                         if y >= vg_height - 2:  # Check against right window height
@@ -189,52 +244,52 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         size = format_size(lv.get('lv_size'))
                         pvlist = lv.get('devices', '')
                         
-                        # Get PE start and end values
-                        pe_start = "N/A"
-                        pe_end = "N/A"
+                        # Get LE start and end values
+                        le_start = "N/A"
+                        le_end = "N/A"
                         
-                        # First try to get PE start directly from LV metadata
+                        # First try to get LE start directly from LV metadata
                         seg_start_pe = lv.get('seg_start_pe')
                         if seg_start_pe and seg_start_pe != "":
                             try:
-                                start_pe = int(float(seg_start_pe))
-                                pe_start = str(start_pe)
+                                start_le = int(float(seg_start_pe))
+                                le_start = str(start_le)
                                 
-                                # Calculate PE end based on PE start and size
+                                # Calculate LE end based on LE start and size
                                 seg_size_pe = lv.get('seg_size_pe', '0')
                                 if seg_size_pe and seg_size_pe != "":
                                     try:
-                                        pe_count = int(float(seg_size_pe))
-                                        pe_end = str(start_pe + pe_count - 1)
+                                        le_count = int(float(seg_size_pe))
+                                        le_end = str(start_le + le_count - 1)
                                     except (ValueError, TypeError):
-                                        pe_end = "N/A"
+                                        le_end = "N/A"
                             except (ValueError, TypeError):
                                 pass
                         
                         # Fallback: Parse from device string if direct metadata not available
-                        if pe_start == "N/A" and pvlist:
-                            # Parse PE start from device string, format is like "/dev/sda1(123)"
-                            # where 123 is the PE start
+                        if le_start == "N/A" and pvlist:
+                            # Parse LE start from device string, format is like "/dev/sda1(123)"
+                            # where 123 is the LE start
                             for pv_segment in pvlist.split(','):
                                 pv_segment = pv_segment.strip()
-                                # Extract PE start from segment
+                                # Extract LE start from segment
                                 start_pos = pv_segment.find('(')
                                 end_pos = pv_segment.find(')')
                                 if start_pos > 0 and end_pos > start_pos:
-                                    pe_start = pv_segment[start_pos+1:end_pos]
-                                    # Calculate PE end based on PE start and size
+                                    le_start = pv_segment[start_pos+1:end_pos]
+                                    # Calculate LE end based on LE start and size
                                     try:
-                                        start_pe = int(float(pe_start))
-                                        # Get segment size in PEs
+                                        start_le = int(float(le_start))
+                                        # Get segment size in LEs
                                         seg_size_pe = lv.get('seg_size_pe', '0')
                                         if seg_size_pe and seg_size_pe != "":
                                             try:
-                                                pe_count = int(float(seg_size_pe))
-                                                pe_end = str(start_pe + pe_count - 1)
+                                                le_count = int(float(seg_size_pe))
+                                                le_end = str(start_le + le_count - 1)
                                             except (ValueError, TypeError):
-                                                pe_end = "N/A"
+                                                le_end = "N/A"
                                     except (ValueError, TypeError):
-                                        pe_end = "N/A"
+                                        le_end = "N/A"
                                     break
                         
                         # Ensure we don't write outside window boundaries
@@ -246,7 +301,41 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         if len(pvlist) > max_width:
                             pvlist = pvlist[:max_width-3] + "..."
                             
-                        right.addstr(y, 4, "{:<10} {:<10} {:>10} {}".format(pe_start, pe_end, size, pvlist))
+                        # Extract PE start info and clean device names
+                        clean_pvlist = ""
+                        pe_start_info = ""
+                        
+                        for pv_segment in pvlist.split(','):
+                            pv_segment = pv_segment.strip()
+                            # Extract PE start from segment
+                            start_pos = pv_segment.find('(')
+                            end_pos = pv_segment.find(')')
+                            
+                            if start_pos > 0 and end_pos > start_pos:
+                                # Extract the PE start value
+                                pe_val = pv_segment[start_pos+1:end_pos]
+                                # Add to PE start info
+                                if pe_start_info:
+                                    pe_start_info += ", "
+                                pe_start_info += pe_val
+                                
+                                # Add clean device name without parentheses
+                                if clean_pvlist:
+                                    clean_pvlist += ", "
+                                clean_pvlist += pv_segment[:start_pos]
+                            else:
+                                # No parentheses found, use as is
+                                if clean_pvlist:
+                                    clean_pvlist += ", "
+                                clean_pvlist += pv_segment
+                        
+                        # Truncate if too long
+                        max_dev_width = w - left_w - 60  # Reserve space for other columns
+                        if len(clean_pvlist) > max_dev_width:
+                            clean_pvlist = clean_pvlist[:max_dev_width-3] + "..."
+                            
+                        right.addstr(y, 4, "{:<10} {:<10} {:>10} {:<20} {}".format(
+                            le_start, le_end, size, clean_pvlist, pe_start_info))
                         y += 1
                     y += 1
             else:
