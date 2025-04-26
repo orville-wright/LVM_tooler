@@ -8,6 +8,7 @@ and details of LVM usage for selected device.
 """
 import curses
 import json
+import os
 import subprocess
 
 def format_size(size_bytes):
@@ -50,7 +51,7 @@ def load_data():
     ])
     lvs_json = run_cmd([
         'lvs', '--reportformat', 'json', '--units', 'b', '--nosuffix',
-        '-o', 'vg_name,lv_name,lv_size,devices'
+        '-o', 'vg_name,lv_name,lv_size,seg_size_pe,seg_start_pe,devices'
     ])
 
     pvs = pvs_json.get('report', [{}])[0].get('pv', []) if pvs_json else []
@@ -82,6 +83,12 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
         stdscr.clear()
         h, w = stdscr.getmaxyx()
         left_w = max(40, w // 3)
+        
+        # Calculate heights for the three panels
+        vg_height = h // 2
+        pv_height = h - vg_height
+        
+        # Create left panel (Block Devices)
         left = stdscr.derwin(h, left_w, 0, 0)
         left.box()
         left.addstr(0, 2, " Block Devices ")
@@ -91,7 +98,9 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             if idx >= h - 3:
                 break
             if isinstance(dev, dict):
-                name = dev.get('path') or dev.get('name', '')
+                # Extract just the device name without path prefixes
+                path = dev.get('path') or dev.get('name', '')
+                name = os.path.basename(path)
                 dtype = dev.get('type', '')
                 size = format_size(dev.get('size'))
                 ptype = dev.get('pttype') or 'none'
@@ -104,7 +113,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             attr = curses.color_pair(1) if idx == current else curses.A_NORMAL
             left.addstr(idx + 2, 1, line, attr)
 
-        right = stdscr.derwin(h, w - left_w, 0, left_w)
+        # Create right top panel (Volume Group)
+        right = stdscr.derwin(vg_height, w - left_w, 0, left_w)
         right.box()
         dev = devices[current] if devices else {}
         if isinstance(dev, dict):
@@ -134,43 +144,112 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     break
                 right.addstr(y, 2, f"Logical Volume: {name}", curses.A_BOLD)
                 y += 1
-                right.addstr(y, 4, "{:<15} {:>10} {}".format("Name", "Size", "PVs"), curses.A_UNDERLINE)
+                right.addstr(y, 4, "{:<10} {:<10} {:>10} {}".format("PE Start", "PE End", "Size", "PVs"), curses.A_UNDERLINE)
                 y += 1
                 for lv in group:
                     if y >= h - 2:
                         break
                     size = format_size(lv.get('lv_size'))
                     pvlist = lv.get('devices', '')
-                    right.addstr(y, 4, "{:<15} {:>10} {}".format(name, size, pvlist))
+                    
+                    # Get PE start and end values
+                    pe_start = "N/A"
+                    pe_end = "N/A"
+                    
+                    # First try to get PE start directly from LV metadata
+                    seg_start_pe = lv.get('seg_start_pe')
+                    if seg_start_pe and seg_start_pe != "":
+                        try:
+                            start_pe = int(float(seg_start_pe))
+                            pe_start = str(start_pe)
+                            
+                            # Calculate PE end based on PE start and size
+                            seg_size_pe = lv.get('seg_size_pe', '0')
+                            if seg_size_pe and seg_size_pe != "":
+                                try:
+                                    pe_count = int(float(seg_size_pe))
+                                    pe_end = str(start_pe + pe_count - 1)
+                                except (ValueError, TypeError):
+                                    pe_end = "N/A"
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Fallback: Parse from device string if direct metadata not available
+                    if pe_start == "N/A" and pvlist:
+                        # Parse PE start from device string, format is like "/dev/sda1(123)"
+                        # where 123 is the PE start
+                        for pv_segment in pvlist.split(','):
+                            pv_segment = pv_segment.strip()
+                            # Extract PE start from segment
+                            start_pos = pv_segment.find('(')
+                            end_pos = pv_segment.find(')')
+                            if start_pos > 0 and end_pos > start_pos:
+                                pe_start = pv_segment[start_pos+1:end_pos]
+                                # Calculate PE end based on PE start and size
+                                try:
+                                    start_pe = int(float(pe_start))
+                                    # Get segment size in PEs
+                                    seg_size_pe = lv.get('seg_size_pe', '0')
+                                    if seg_size_pe and seg_size_pe != "":
+                                        try:
+                                            pe_count = int(float(seg_size_pe))
+                                            pe_end = str(start_pe + pe_count - 1)
+                                        except (ValueError, TypeError):
+                                            pe_end = "N/A"
+                                except (ValueError, TypeError):
+                                    pe_end = "N/A"
+                                break
+                    
+                    right.addstr(y, 4, "{:<10} {:<10} {:>10} {}".format(pe_start, pe_end, size, pvlist))
                     y += 1
                 y += 1
-            if y + 2 < h - 1:
-                right.addstr(y, 2, "Physical Volumes:", curses.A_BOLD)
-                right.addstr(y + 1, 2, "{:<15} {:>10} {:>8} {}".format("Name", "Size", "LV count", "Free"), curses.A_UNDERLINE)
-                pvs_in_vg = [p for p in pvs_map.values() if p.get('vg_name') == vg_name]
-                # Calculate LV count per PV
-                pv_lv_count = {}
-                for lv in lvs_in_vg:
-                    devices = lv.get('devices', '')
-                    # Debug print devices string
-                    # print(f"LV devices: {devices}")
-                    for dev in devices.split(','):
-                        dev = dev.strip()
-                        if dev:
-                            dev_basename = dev.split('/')[-1]
-                            # Debug print device basename
-                            # print(f"Device basename: {dev_basename}")
-                            pv_lv_count[dev_basename] = pv_lv_count.get(dev_basename, 0) + 1
-                for j, p in enumerate(pvs_in_vg):
-                    if y + 2 + j >= h - 1:
-                        break
-                    pname = p.get('pv_name')
-                    psize = format_size(p.get('pv_size'))
-                    free = format_size(p.get('pv_free'))
-                    lv_count = pv_lv_count.get(pname, 0)
-                    right.addstr(y + 2 + j, 2, "{:<15} {:>10} {:>8} {}".format(pname, psize, lv_count, free))
         else:
             right.addstr(1, 2, f"No LVM info for {path}")
+            
+        # Create right bottom panel (Physical Volumes)
+        pv_panel = stdscr.derwin(pv_height, w - left_w, vg_height, left_w)
+        pv_panel.box()
+        pv_panel.addstr(0, 2, " Physical Volumes ")
+        
+        dev = devices[current] if devices else {}
+        if isinstance(dev, dict):
+            path = dev.get('path')
+        else:
+            path = dev
+        pv = pvs_map.get(path)
+        
+        if pv:
+            vg_name = pv.get('vg_name')
+            pvs_in_vg = [p for p in pvs_map.values() if p.get('vg_name') == vg_name]
+            
+            # Calculate LV count per PV
+            pv_lv_count = {}
+            lvs_in_vg = lvs_map.get(vg_name, [])
+            for lv in lvs_in_vg:
+                devices = lv.get('devices', '')
+                for dev in devices.split(','):
+                    dev = dev.strip()
+                    if dev:
+                        # Match physical volume names by checking if pv_name is in dev string
+                        for pv_name in pvs_map:
+                            if pv_name in dev:
+                                pv_lv_count[pv_name] = pv_lv_count.get(pv_name, 0) + 1
+            
+            # Display PV info in the new panel
+            pv_panel.addstr(1, 2, "{:<15} {:>10} {:>8} {}".format(
+                "Name", "Size", "LV count", "Free"), curses.A_UNDERLINE)
+            
+            for j, p in enumerate(pvs_in_vg):
+                if j >= pv_height - 3:
+                    break
+                pname = p.get('pv_name')
+                psize = format_size(p.get('pv_size'))
+                free = format_size(p.get('pv_free'))
+                lv_count = pv_lv_count.get(pname, 0)
+                pv_panel.addstr(j + 2, 2, "{:<15} {:>10} {:>8} {}".format(
+                    pname, psize, lv_count, free))
+        else:
+            pv_panel.addstr(1, 2, "No Physical Volume information available")
 
         stdscr.refresh()
         key = stdscr.getch()
