@@ -95,7 +95,7 @@ def load_data():
     ])
     vgs_json = run_cmd([
         'vgs', '--reportformat', 'json', '--units', 'b', '--nosuffix',
-        '-o', 'vg_name,vg_size,vg_free,pv_count,lv_count,vg_attr'
+        '-o', 'vg_name,vg_size,vg_free,pv_count,lv_count,vg_attr,vg_extent_size'
     ])
     lvs_json = run_cmd([
         'lvs', '--reportformat', 'json', '--units', 'b', '--nosuffix',
@@ -168,7 +168,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 display_vg_name = vg_name
                 if vg_name and len(vg_name) > vg_width - 15:
                     display_vg_name = vg_name[:vg_width - 18] + "..."
-                right.addstr(0, 2, f" {display_vg_name} ({vg_size}) ")
+                right.addstr(0, 2, f" Volume Group - {display_vg_name} ({vg_size}) ")
                 
                 fmt = vg.get('vg_attr', '')
                 lvs_in_vg = lvs_map.get(vg_name, [])
@@ -179,13 +179,18 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 if len(lv_names_str) > vg_width - 20:
                     lv_names_str = lv_names_str[:vg_width - 23] + "..."
                     
+                # Get PE Size information
+                vg_pe_size = vg.get('vg_extent_size', 'N/A')
+                vg_pe_size_formatted = format_size(vg_pe_size) if vg_pe_size != 'N/A' else 'N/A'
+                
                 right.addstr(2, 2, f"Format: {fmt}")
-                right.addstr(3, 2, f"Logical Volumes: {lv_names_str}")
+                right.addstr(3, 2, f"VG PE size: {vg_pe_size_formatted}")
+                right.addstr(4, 2, f"Logical Volumes: {lv_names_str}")
                 
                 # Only add header if we have vertical space
-                if h > 6:
-                    right.addstr(5, 2, "[  Logical Volumes  ]", curses.A_BOLD)
-                y = 6
+                if h > 7:
+                    right.addstr(6, 2, "[  Logical Volumes  ]", curses.A_BOLD)
+                y = 8
                 # Group Logical Volumes by name
                 lv_groups = {}
                 for lv in lvs_in_vg:
@@ -231,12 +236,33 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     # Ensure we don't write outside window boundaries
                     if y >= h - 2:
                         break
-                    right.addstr(y, 4, "{:<10} {:<10} {:>10} {:<20} {}".format("LE Start", "LE End", "Size", "PVs", "PE Start"), curses.A_UNDERLINE)
+                    right.addstr(y, 4, "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
+                        "LE Start", "LE End", "PE Count", "PE Size", "PVs", "PE Start"), curses.A_UNDERLINE)
                     y += 1
                     for lv in group:
                         if y >= h - 2:  # Check against full screen height
                             break
-                        size = format_size(lv.get('lv_size'))
+                        
+                        # Calculate PE count and PE size
+                        pe_count = "N/A"
+                        pe_size = "N/A"
+                        
+                        # Get segment size in PEs
+                        seg_size_pe = lv.get('seg_size_pe', '0')
+                        if seg_size_pe and seg_size_pe != "":
+                            try:
+                                pe_count = int(float(seg_size_pe))
+                                
+                                # Calculate PE size using VG PE size
+                                if vg_pe_size != 'N/A':
+                                    try:
+                                        pe_size_bytes = int(float(vg_pe_size)) * pe_count
+                                        pe_size = format_size(pe_size_bytes)
+                                    except (ValueError, TypeError):
+                                        pe_size = "N/A"
+                            except (ValueError, TypeError):
+                                pe_count = "N/A"
+                        
                         pvlist = lv.get('devices', '')
                         
                         # Get LE start and end values
@@ -329,8 +355,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         if len(clean_pvlist) > max_dev_width:
                             clean_pvlist = clean_pvlist[:max_dev_width-3] + "..."
                             
-                        right.addstr(y, 4, "{:<10} {:<10} {:>10} {:<20} {}".format(
-                            le_start, le_end, size, clean_pvlist, pe_start_info))
+                        right.addstr(y, 4, "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
+                            le_start, le_end, str(pe_count), pe_size, clean_pvlist, pe_start_info))
                         y += 1
                     y += 1
             else:
@@ -339,7 +365,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             # Create Physical Volumes panel (right side, top half)
             pv_panel = stdscr.derwin(pv_height, pv_width, 0, vg_width)
             pv_panel.box()
-            pv_panel.addstr(0, 2, " Physical Volumes ")
+            pv_panel.addstr(0, 2, " LVM - Physical Volumes (PV) ")
             
             dev = devices[current] if devices else {}
             if isinstance(dev, dict):
@@ -356,8 +382,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 pv_lv_count = {}
                 lvs_in_vg = lvs_map.get(vg_name, [])
                 for lv in lvs_in_vg:
-                    devices = lv.get('devices', '')
-                    for dev in devices.split(','):
+                    lv_devices = lv.get('devices', '')
+                    for dev in lv_devices.split(','):
                         dev = dev.strip()
                         if dev:
                             # Match physical volume names by checking if pv_name is in dev string
@@ -392,7 +418,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             # Create Block Devices panel (right side, bottom half)
             block_dev_panel = stdscr.derwin(block_dev_height, pv_width, pv_height, vg_width)
             block_dev_panel.box()
-            block_dev_panel.addstr(0, 2, " Block Devices ")
+            block_dev_panel.addstr(0, 2, " System Block Devices ")
             
             # Display block devices list
             if devices:
@@ -402,7 +428,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 
                 # Calculate visible range based on panel size and current selection
                 visible_count = block_dev_height - 4  # Account for borders and header
-                start_idx = max(0, min(block_dev_selected, len(devices) - visible_count))
+                start_idx = max(0, min(block_dev_selected, max(0, len(devices) - visible_count)))
                 end_idx = min(start_idx + visible_count, len(devices))
                 
                 for i, dev in enumerate(devices[start_idx:end_idx]):
