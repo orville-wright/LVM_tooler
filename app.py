@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Interactive LVM and Block Device Browser
+Interactive LVM Browser
 
 Scans system block devices and LVM configuration,
-and displays in a curses UI with a list of block devices
-and details of LVM usage for selected device.
+and displays in a curses UI with detailed information about
+Volume Groups, Logical Volumes, and Physical Volumes.
 """
 import curses
 import json
@@ -116,7 +116,7 @@ def load_data():
     return devices, pvs_map, vg_map, lvs_map
 
 def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
-    """Draw the curses UI with block devices and LVM information."""
+    """Draw the curses UI with LVM information."""
     # Initialize curses settings
     curses.curs_set(0)  # Hide cursor
     curses.start_color()
@@ -124,6 +124,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Selected item highlight
 
     current = 0  # Current selected device index
+    block_dev_selected = 0  # Current selected block device index
+    active_panel = 0  # 0 = main, 1 = block devices
     
     # Main UI loop
     while True:
@@ -140,54 +142,17 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 if key in (ord('q'), 27):  # q or ESC to quit
                     break
                 continue
-                
-            # Increase left panel width to accommodate new columns
-            left_w = max(70, w // 2)
             
-            # Calculate heights for the three panels
-            vg_height = h // 2
-            pv_height = h - vg_height
+            # Calculate widths for the two panels
+            vg_width = w // 2
+            pv_width = w - vg_width
             
-            # Create left panel (Block Devices)
-            left = stdscr.derwin(h, left_w, 0, 0)
-            left.box()
-            left.addstr(0, 2, " Block Devices ")
-            header = "{:<15} {:<8} {:>10} {:<8} {:<15} {:>8} {:>8}".format(
-                "Name", "Type", "Size", "PTType", "Mount", "Used", "Avail")
-            left.addstr(1, 1, header, curses.A_BOLD)
-            for idx, dev in enumerate(devices):
-                if idx >= h - 3:
-                    break
-                if isinstance(dev, dict):
-                    # Extract just the device name without path prefixes
-                    path = dev.get('path') or dev.get('name', '')
-                    name = os.path.basename(path)
-                    dtype = dev.get('type', '')
-                    size = format_size(dev.get('size'))
-                    ptype = dev.get('pttype') or 'none'
-                    mount = dev.get('mount_point', 'N/A')
-                    used = dev.get('used', 'N/A')
-                    avail = dev.get('avail', 'N/A')
-                    
-                    # Truncate mount point if too long to prevent display issues
-                    if len(mount) > 15:
-                        mount = mount[:12] + "..."
-                else:
-                    name = dev
-                    dtype = ''
-                    size = 'N/A'
-                    ptype = 'none'
-                    mount = 'N/A'
-                    used = 'N/A'
-                    avail = 'N/A'
-                
-                line = "{:<15} {:<8} {:>10} {:<8} {:<15} {:>8} {:>8}".format(
-                    name, dtype, size, ptype, mount, used, avail)
-                attr = curses.color_pair(1) if idx == current else curses.A_NORMAL
-                left.addstr(idx + 2, 1, line, attr)
-
-            # Create right top panel (Volume Group)
-            right = stdscr.derwin(vg_height, w - left_w, 0, left_w)
+            # Calculate heights for the split right panels
+            pv_height = h // 2
+            block_dev_height = h - pv_height
+            
+            # Create Volume Group panel (left side, full height)
+            right = stdscr.derwin(h, vg_width, 0, 0)
             right.box()
             dev = devices[current] if devices else {}
             if isinstance(dev, dict):
@@ -201,8 +166,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 vg_size = format_size(vg.get('vg_size'))
                 # Truncate vg_name if too long
                 display_vg_name = vg_name
-                if vg_name and len(vg_name) > w - left_w - 15:
-                    display_vg_name = vg_name[:w - left_w - 18] + "..."
+                if vg_name and len(vg_name) > vg_width - 15:
+                    display_vg_name = vg_name[:vg_width - 18] + "..."
                 right.addstr(0, 2, f" {display_vg_name} ({vg_size}) ")
                 
                 fmt = vg.get('vg_attr', '')
@@ -211,14 +176,14 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 
                 # Truncate lv_names if joined string is too long
                 lv_names_str = ', '.join(lv_names) if lv_names else 'none'
-                if len(lv_names_str) > w - left_w - 20:
-                    lv_names_str = lv_names_str[:w - left_w - 23] + "..."
+                if len(lv_names_str) > vg_width - 20:
+                    lv_names_str = lv_names_str[:vg_width - 23] + "..."
                     
                 right.addstr(2, 2, f"Format: {fmt}")
                 right.addstr(3, 2, f"Logical Volumes: {lv_names_str}")
                 
                 # Only add header if we have vertical space
-                if vg_height > 6:
+                if h > 6:
                     right.addstr(5, 2, "[  Logical Volumes  ]", curses.A_BOLD)
                 y = 6
                 # Group Logical Volumes by name
@@ -227,19 +192,49 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     name = lv.get('lv_name')
                     lv_groups.setdefault(name, []).append(lv)
                 for name, group in lv_groups.items():
-                    if y >= vg_height - 2:  # Check against right window height instead of full screen
+                    if y >= h - 2:  # Check against right window height instead of full screen
                         break
                     # Truncate name if too long to prevent boundary errors
-                    display_name = name[:left_w-20] + '...' if len(name) > left_w-17 else name
+                    display_name = name[:vg_width-20] + '...' if len(name) > vg_width-17 else name
                     right.addstr(y, 2, f"Logical Volume: {display_name}", curses.A_BOLD)
                     y += 1
+                    
+                    # Add mount point and capacity information
+                    # Find the device path for this logical volume
+                    lv_path = f"/dev/{vg_name}/{name}"
+                    mount_point = "N/A"
+                    capacity = format_size(group[0].get('lv_size')) if group else "N/A"
+                    used = "N/A"
+                    available = "N/A"
+                    
+                    # Search for mount point and capacity information in devices
+                    for dev in devices:
+                        if isinstance(dev, dict) and dev.get('path') == lv_path:
+                            mount_point = dev.get('mount_point', 'N/A')
+                            used = dev.get('used', 'N/A')
+                            available = dev.get('avail', 'N/A')
+                            break
+                    
+                    # Display additional information
+                    right.addstr(y, 4, f"Mounted: {mount_point}")
+                    y += 1
+                    right.addstr(y, 4, f"Capacity: {capacity}")
+                    y += 1
+                    right.addstr(y, 4, f"Used: {used}")
+                    y += 1
+                    right.addstr(y, 4, f"Available: {available}")
+                    y += 1
+                    
+                    # Add blank line before tabular data
+                    y += 1
+                    
                     # Ensure we don't write outside window boundaries
-                    if y >= vg_height - 2:
+                    if y >= h - 2:
                         break
                     right.addstr(y, 4, "{:<10} {:<10} {:>10} {:<20} {}".format("LE Start", "LE End", "Size", "PVs", "PE Start"), curses.A_UNDERLINE)
                     y += 1
                     for lv in group:
-                        if y >= vg_height - 2:  # Check against right window height
+                        if y >= h - 2:  # Check against full screen height
                             break
                         size = format_size(lv.get('lv_size'))
                         pvlist = lv.get('devices', '')
@@ -293,11 +288,11 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                                     break
                         
                         # Ensure we don't write outside window boundaries
-                        if y >= vg_height - 2:
+                        if y >= h - 2:
                             break
                             
                         # Truncate pvlist if too long to prevent boundary errors
-                        max_width = w - left_w - 40  # Reserve space for other columns
+                        max_width = vg_width - 40  # Reserve space for other columns
                         if len(pvlist) > max_width:
                             pvlist = pvlist[:max_width-3] + "..."
                             
@@ -330,7 +325,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                                 clean_pvlist += pv_segment
                         
                         # Truncate if too long
-                        max_dev_width = w - left_w - 60  # Reserve space for other columns
+                        max_dev_width = vg_width - 60  # Reserve space for other columns
                         if len(clean_pvlist) > max_dev_width:
                             clean_pvlist = clean_pvlist[:max_dev_width-3] + "..."
                             
@@ -341,8 +336,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             else:
                 right.addstr(1, 2, f"No LVM info for {path}")
                 
-            # Create right bottom panel (Physical Volumes)
-            pv_panel = stdscr.derwin(pv_height, w - left_w, vg_height, left_w)
+            # Create Physical Volumes panel (right side, top half)
+            pv_panel = stdscr.derwin(pv_height, pv_width, 0, vg_width)
             pv_panel.box()
             pv_panel.addstr(0, 2, " Physical Volumes ")
             
@@ -378,9 +373,10 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     if j >= pv_height - 3:
                         break
                     pname = p.get('pv_name', '')
-                    # Truncate pname if too long
-                    if len(pname) > 15:
-                        pname = pname[:12] + "..."
+                    # Truncate pname if too long, accounting for narrower panel
+                    max_pname_width = min(15, pv_width - 25)  # Ensure it fits in the narrower panel
+                    if len(pname) > max_pname_width:
+                        pname = pname[:max_pname_width-3] + "..."
                         
                     psize = format_size(p.get('pv_size'))
                     free = format_size(p.get('pv_free'))
@@ -390,17 +386,73 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     if j + 2 < pv_height - 1:
                         pv_panel.addstr(j + 2, 2, "{:<15} {:>10} {:>8} {}".format(
                             pname, psize, lv_count, free))
+                else:
+                    pv_panel.addstr(1, 2, "No Physical Volume information available")
+            
+            # Create Block Devices panel (right side, bottom half)
+            block_dev_panel = stdscr.derwin(block_dev_height, pv_width, pv_height, vg_width)
+            block_dev_panel.box()
+            block_dev_panel.addstr(0, 2, " Block Devices ")
+            
+            # Display block devices list
+            if devices:
+                # Display header for block devices
+                block_dev_panel.addstr(1, 2, "{:<20} {:>10} {:<15}".format(
+                    "Device", "Size", "Type"), curses.A_UNDERLINE)
+                
+                # Calculate visible range based on panel size and current selection
+                visible_count = block_dev_height - 4  # Account for borders and header
+                start_idx = max(0, min(block_dev_selected, len(devices) - visible_count))
+                end_idx = min(start_idx + visible_count, len(devices))
+                
+                for i, dev in enumerate(devices[start_idx:end_idx]):
+                    y_pos = i + 2
+                    if y_pos >= block_dev_height - 1:
+                        break
+                    
+                    # Get device info
+                    if isinstance(dev, dict):
+                        name = dev.get('name', 'Unknown')
+                        size = format_size(dev.get('size', 0))
+                        dev_type = dev.get('type', 'Unknown')
+                    else:
+                        name = str(dev)
+                        size = 'N/A'
+                        dev_type = 'Unknown'
+                    
+                    # Truncate name if too long
+                    if len(name) > 18:
+                        name = name[:15] + "..."
+                    
+                    # Highlight if this is the selected block device
+                    attr = curses.A_REVERSE if (i + start_idx == block_dev_selected and active_panel == 1) else 0
+                    block_dev_panel.addstr(y_pos, 2, "{:<20} {:>10} {:<15}".format(
+                        name, size, dev_type), attr)
             else:
-                pv_panel.addstr(1, 2, "No Physical Volume information available")
+                block_dev_panel.addstr(1, 2, "No block devices available")
 
             # Refresh screen and handle keyboard input
             stdscr.refresh()
             key = stdscr.getch()
-            if key in (curses.KEY_UP, ord('k')) and current > 0:
-                current -= 1
-            elif key in (curses.KEY_DOWN, ord('j')) and current < len(devices) - 1:
-                current += 1
-            elif key in (ord('q'), 27):  # q or ESC to quit
+            
+            # Handle panel switching with Tab key
+            if key == 9:  # Tab key
+                active_panel = 1 - active_panel
+            # Handle navigation in main panel
+            elif active_panel == 0:
+                if key in (curses.KEY_UP, ord('k')) and current > 0:
+                    current -= 1
+                elif key in (curses.KEY_DOWN, ord('j')) and current < len(devices) - 1:
+                    current += 1
+            # Handle navigation in block devices panel
+            elif active_panel == 1:
+                if key in (curses.KEY_UP, ord('k')) and block_dev_selected > 0:
+                    block_dev_selected -= 1
+                elif key in (curses.KEY_DOWN, ord('j')) and block_dev_selected < len(devices) - 1:
+                    block_dev_selected += 1
+            
+            # Global quit key
+            if key in (ord('q'), 27):  # q or ESC to quit
                 break
                 
         except curses.error as e:

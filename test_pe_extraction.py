@@ -5,6 +5,17 @@ Test script for verifying the PE start extraction functionality
 import unittest
 from unittest.mock import patch, MagicMock
 
+# Mock curses functions to avoid initialization errors
+import curses
+curses.initscr = MagicMock()
+curses.curs_set = MagicMock()
+curses.start_color = MagicMock()
+curses.use_default_colors = MagicMock()
+curses.init_pair = MagicMock()
+curses.color_pair = MagicMock()
+curses.A_BOLD = 1
+curses.A_UNDERLINE = 2
+
 class TestPEStartExtraction(unittest.TestCase):
     """Test the PE start extraction functionality"""
     
@@ -84,14 +95,19 @@ class TestPEStartExtraction(unittest.TestCase):
     
     def test_column_header_includes_pe_start(self):
         """Test that the column header includes PE Start"""
-        # Mock the implementation of the curses addstr function
-        with patch('curses.window.addstr') as mock_addstr:
-            # Create a mock for the format string that would be passed to addstr
-            format_string = "{:<10} {:<10} {:>10} {:<20} {}".format(
-                "LE Start", "LE End", "Size", "PVs", "PE Start")
-            
-            # Verify that the format string includes the PE Start column
-            self.assertIn("PE Start", format_string)
+        # Create a format string similar to what's used in the app
+        format_string = "{:<10} {:<10} {:>10} {:<20} {}".format(
+            "LE Start", "LE End", "Size", "PVs", "PE Start")
+        
+        # Verify that the format string includes the PE Start column
+        self.assertIn("PE Start", format_string)
+        
+        # Also check the app code to ensure it includes PE Start in the header
+        import inspect
+        import app
+        
+        draw_ui_code = inspect.getsource(app.draw_ui)
+        self.assertIn("PE Start", draw_ui_code)
 
 if __name__ == '__main__':
     unittest.main()
