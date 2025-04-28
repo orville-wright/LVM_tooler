@@ -9,7 +9,9 @@ Volume Groups, Logical Volumes, and Physical Volumes.
 import curses
 import json
 import os
+import re
 import subprocess
+import shlex
 
 def format_size(size_bytes):
     """Format size in bytes to human-readable KiB, MiB, GiB, TiB."""
@@ -19,7 +21,13 @@ def format_size(size_bytes):
         return 'N/A'
     for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB']:
         if size < 1024 or unit == 'TiB':
-            return f"{size:.2f} {unit}"
+            # Format with consistent decimal alignment
+            if size < 10:
+                return f"  {size:.2f} {unit}"  # Two spaces for single digit
+            elif size < 100:
+                return f" {size:.2f} {unit}"   # One space for double digit
+            else:
+                return f"{size:.2f} {unit}"    # No space for triple+ digit
         size /= 1024.0
 
 def run_cmd(cmd):
@@ -30,12 +38,147 @@ def run_cmd(cmd):
     except Exception:
         return None
 
+def run_cmd_text(cmd):
+    """Run command and return text output, or empty string on error."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return result.stdout
+    except Exception:
+        return ""
+
+def clean_device_info(text):
+    """Clean up device information text according to specified rules."""
+    text = text.replace("HARDDISK", "HDD")
+    text = text.replace("(iscsi)", "")
+    text = text.replace("Linux device-mapper (linear) (dm)", "LINUX Dev-map")
+    return text
+
 def load_data():
     """Load block devices and LVM data."""
     bs = run_cmd(['lsblk', '-b', '-O', '-J'])
     raw_devices = bs.get('blockdevices', []) if bs else []
     devices = []
     seen_paths = set()  # Track unique device paths
+    
+    # Get additional disk information from fdisk and parted
+    fdisk_info = {}
+    parted_info = {}
+    
+    # Run fdisk -l to get disk information
+    fdisk_output = run_cmd_text(['fdisk', '-l'])
+    
+    # Parse fdisk output for each disk
+    current_disk = None
+    disk_label_type = None
+    in_partition_table = False
+    partition_info = {}
+    
+    for line in fdisk_output.splitlines():
+        line = line.strip()
+        
+        # New disk entry
+        if line.startswith("Disk /"):
+            # Extract device path
+            disk_path_match = re.search(r'Disk (\/[^:]+):', line)
+            if disk_path_match:
+                current_disk = disk_path_match.group(1)
+                fdisk_info[current_disk] = {
+                    'disk_model': '',
+                    'disklabel_type': '',
+                    'partitions': {}
+                }
+                in_partition_table = False
+                
+        # Disk model information
+        elif current_disk and "Disk model:" in line:
+            model = line.split("Disk model:")[1].strip()
+            fdisk_info[current_disk]['disk_model'] = clean_device_info(model)
+            
+        # Disklabel type information
+        elif current_disk and "Disklabel type:" in line:
+            label_type = line.split("Disklabel type:")[1].strip()
+            fdisk_info[current_disk]['disklabel_type'] = label_type
+            disk_label_type = label_type
+            
+        # Start of partition table
+        elif current_disk and "Device" in line and "Start" in line and "End" in line:
+            in_partition_table = True
+            continue
+            
+        # Partition information
+        elif current_disk and in_partition_table and line and not line.startswith("Disk "):
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].startswith(current_disk):
+                part_path = parts[0]
+                if disk_label_type == "dos" and len(parts) >= 7:
+                    # For MBR/dos partition tables
+                    fdisk_info[current_disk]['partitions'][part_path] = {
+                        'fdisk_id_info': parts[4] if len(parts) > 4 else 'N/A',
+                        'fdisk_type_info': ' '.join(parts[5:]) if len(parts) > 5 else 'N/A'
+                    }
+    
+    # Run parted -l to get additional disk information for GPT disks
+    parted_output = run_cmd_text(['parted', '-l'])
+    
+    # Parse parted output
+    current_disk = None
+    in_disk_flags = False
+    
+    for line in parted_output.splitlines():
+        line = line.strip()
+        
+        # New disk entry
+        if line.startswith("Disk /"):
+            disk_path_match = re.search(r'Disk (\/[^:]+):', line)
+            if disk_path_match:
+                current_disk = disk_path_match.group(1)
+                parted_info[current_disk] = {
+                    'gpt_model_info': '',
+                    'gpt_part_table_type': '',
+                    'partitions': {}
+                }
+                in_disk_flags = False
+                
+        # Model information
+        elif current_disk and line.startswith("Model:"):
+            model = line.split("Model:")[1].strip()
+            parted_info[current_disk]['gpt_model_info'] = clean_device_info(model)
+            
+        # Partition table type
+        elif current_disk and "Partition Table:" in line:
+            table_type = line.split("Partition Table:")[1].strip()
+            parted_info[current_disk]['gpt_part_table_type'] = table_type
+            
+        # Start of partition table
+        elif current_disk and "Number" in line and "Start" in line and "End" in line:
+            in_disk_flags = True
+            continue
+            
+        # Partition information in parted output
+        elif current_disk and in_disk_flags and line and re.match(r'^\s*\d+', line):
+            parts = line.split()
+            if len(parts) >= 4:
+                part_num = parts[0].strip()
+                part_path = f"{current_disk}{part_num}"
+                
+                # Initialize if not exists
+                if part_path not in parted_info[current_disk]['partitions']:
+                    parted_info[current_disk]['partitions'][part_path] = {}
+                
+                # Extract filesystem and flags
+                fs_info = parts[-2] if len(parts) > 2 else 'N/A'
+                flags_info = parts[-1] if len(parts) > 1 else 'N/A'
+                
+                # Clean up the information
+                fs_info = clean_device_info(fs_info)
+                flags_info = clean_device_info(flags_info)
+                
+                # Store the information
+                parted_info[current_disk]['partitions'][part_path] = {
+                    'gpt_disk_flags_type': parts[4] if len(parts) > 4 else 'N/A',
+                    'gpt_fs_info': fs_info,
+                    'gpt_df_flagsinfo': flags_info
+                }
     
     # Get mount point and capacity information using df command
     df_info = {}
@@ -83,6 +226,39 @@ def load_data():
                 dev['used'] = 'N/A'
                 dev['avail'] = 'N/A'
                 
+            # Add additional disk information from fdisk and parted
+            if path.startswith('/dev/'):
+                # Find the disk this device belongs to
+                disk_path = None
+                for disk in fdisk_info:
+                    if path == disk or path.startswith(disk):
+                        disk_path = disk
+                        break
+                
+                if disk_path:
+                    # Add disk information
+                    if path == disk_path:
+                        # This is a disk, add disk-level info
+                        if disk_path in fdisk_info:
+                            dev['disk_model'] = fdisk_info[disk_path].get('disk_model', 'N/A')
+                            dev['disklabel_type'] = fdisk_info[disk_path].get('disklabel_type', 'N/A')
+                        
+                        if disk_path in parted_info:
+                            dev['gpt_model_info'] = parted_info[disk_path].get('gpt_model_info', 'N/A')
+                            dev['gpt_part_table_type'] = parted_info[disk_path].get('gpt_part_table_type', 'N/A')
+                    else:
+                        # This is a partition, add partition-level info
+                        if disk_path in fdisk_info and path in fdisk_info[disk_path]['partitions']:
+                            part_info = fdisk_info[disk_path]['partitions'][path]
+                            dev['fdisk_id_info'] = part_info.get('fdisk_id_info', 'N/A')
+                            dev['fdisk_type_info'] = part_info.get('fdisk_type_info', 'N/A')
+                        
+                        if disk_path in parted_info and path in parted_info[disk_path]['partitions']:
+                            part_info = parted_info[disk_path]['partitions'][path]
+                            dev['gpt_disk_flags_type'] = part_info.get('gpt_disk_flags_type', 'N/A')
+                            dev['gpt_fs_info'] = part_info.get('gpt_fs_info', 'N/A')
+                            dev['gpt_df_flagsinfo'] = part_info.get('gpt_df_flagsinfo', 'N/A')
+            
             devices.append(dev)
         for child in dev.get('children', []):
             dfs(child)
@@ -423,8 +599,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             # Display block devices list
             if devices:
                 # Display header for block devices
-                block_dev_panel.addstr(1, 2, "{:<20} {:>10} {:<15}".format(
-                    "Device", "Size", "Type"), curses.A_UNDERLINE)
+                block_dev_panel.addstr(1, 2, "{:<9} {:>16} {:>6} {:>8} {:>8} {:>7} {:>10}".format(
+                    "Device", "Size bin", "Unit", "Part", "Type", "F/S", "Flags"), curses.A_UNDERLINE)
                 
                 # Calculate visible range based on panel size and current selection
                 visible_count = block_dev_height - 4  # Account for borders and header
@@ -441,19 +617,76 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         name = dev.get('name', 'Unknown')
                         size = format_size(dev.get('size', 0))
                         dev_type = dev.get('type', 'Unknown')
+                        
+                        # Get additional info from fdisk/parted with priority to parted
+                        # Only use fdisk_type_info for Disk column, not fdisk_id_info
+                        disk_type = dev.get('fdisk_type_info', '---')
+                        fs_info = dev.get('gpt_fs_info', '---')
+                        flags_info = dev.get('gpt_df_flagsinfo', '---')
+                        
+                        # Get device size for potential use in flags_info
+                        device_size = format_size(dev.get('size', 0))
+                        
+                        # Determine partition type for Part column
+                        part_type = '---'
+                        
+                        # Get device type and partition type info from various sources
+                        dev_type_value = dev.get('type', '')
+                        fdisk_id = dev.get('fdisk_id_info', '')
+                        gpt_flags = dev.get('gpt_disk_flags_type', '')
+                        
+                        # If it's a disk, display "Disk" in the Part column
+                        if dev_type_value == 'disk':
+                            part_type = 'Disk'
+                        # Check for partition type and set appropriate value
+                        elif dev_type_value == 'part':
+                            # Check for primary partition
+                            if 'primary' in fdisk_id.lower() or 'primary' in gpt_flags.lower():
+                                part_type = 'Pri'
+                            # Check for extended partition
+                            elif 'extended' in fdisk_id.lower() or 'extended' in gpt_flags.lower():
+                                part_type = 'Extd'
+                                # For extended partitions, set fs_info to "Extend" and flags_info to size
+                                fs_info = 'Extend'
+                                flags_info = device_size
+                            # Check for logical partition
+                            elif 'logical' in fdisk_id.lower() or 'logical' in gpt_flags.lower():
+                                part_type = 'Logi'
+                            else:
+                                # Default to 'Pri' for regular partitions if type not detected
+                                part_type = 'Pri'
+                        
+                        if dev.get('gpt_part_table_type', 'N/A') != 'N/A':
+                            disk_type = dev.get('gpt_part_table_type', 'N/A')
                     else:
                         name = str(dev)
                         size = 'N/A'
                         dev_type = 'Unknown'
+                        part_type = '---'  # Default to '---' for unknown partition types
+                        disk_type = 'N/A'
+                        fs_info = 'N/A'
+                        flags_info = 'N/A'
                     
                     # Truncate name if too long
-                    if len(name) > 18:
-                        name = name[:15] + "..."
+                    if len(name) > 13:
+                        name = name[:10] + "..."
+                        
+                    # Truncate other fields if too long
+                    if len(part_type) > 6:
+                        part_type = part_type[:5] + "."
+                    if len(disk_type) > 6:
+                        disk_type = disk_type[:5] + "."
+                    if len(fs_info) > 6:
+                        fs_info = fs_info[:5] + "."
+                    if len(flags_info) > 6:
+                        flags_info = flags_info[:5] + "."
+                    if len(dev_type) > 6:
+                        dev_type = dev_type[:5] + "."
                     
                     # Highlight if this is the selected block device
                     attr = curses.A_REVERSE if (i + start_idx == block_dev_selected and active_panel == 1) else 0
-                    block_dev_panel.addstr(y_pos, 2, "{:<20} {:>10} {:<15}".format(
-                        name, size, dev_type), attr)
+                    block_dev_panel.addstr(y_pos, 2, "{:<15} {:<12} {:<8} {:<8} {:<8} {:<8} {:<8}".format(
+                        name, size, dev_type, part_type, disk_type, fs_info, flags_info), attr)
             else:
                 block_dev_panel.addstr(1, 2, "No block devices available")
 
