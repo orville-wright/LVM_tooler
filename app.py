@@ -327,7 +327,11 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             pv_height = h // 2
             block_dev_height = h - pv_height
             
+            #------------------------------------------------------------
+            # Panel (Top half, left side)
             # Create Volume Group panel (left side, full height)
+            #------------------------------------------------------------
+            
             right = stdscr.derwin(h, vg_width, 0, 0)
             right.box()
             dev = devices[current] if devices else {}
@@ -537,11 +541,14 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     y += 1
             else:
                 right.addstr(1, 2, f"No LVM info for {path}")
-                
+          
+            #------------------------------------------------------------
+            # Panel (Top half, right side)    
             # Create Physical Volumes panel (right side, top half)
+            #------------------------------------------------------------
             pv_panel = stdscr.derwin(pv_height, pv_width, 0, vg_width)
             pv_panel.box()
-            pv_panel.addstr(0, 2, " LVM - Physical Volumes (PV) ")
+            pv_panel.addstr(0, 2, " Physical Volumes (PV) ")
             
             dev = devices[current] if devices else {}
             if isinstance(dev, dict):
@@ -567,12 +574,15 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                                 if pv_name in dev:
                                     pv_lv_count[pv_name] = pv_lv_count.get(pv_name, 0) + 1
                 
+                #----------------------------------------------
+                # Table headers
                 # Display PV info in the new panel
-                pv_panel.addstr(1, 2, "{:<15} {:>10} {:>8} {}".format(
-                    "Name", "Size", "LV count", "Free"), curses.A_UNDERLINE)
+                #----------------------------------------------
+                pv_panel.addstr(2, 2, "{:>2} {:>16} {:>8} {:>10}".format(
+                    "Block dev", "Size bin", "LV #", "Free cap"), curses.A_UNDERLINE)
                 
                 for j, p in enumerate(pvs_in_vg):
-                    if j >= pv_height - 3:
+                    if j >= pv_height - 2:
                         break
                     pname = p.get('pv_name', '')
                     # Truncate pname if too long, accounting for narrower panel
@@ -586,10 +596,14 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     
                     # Only write if we have space in the panel
                     if j + 2 < pv_height - 1:
-                        pv_panel.addstr(j + 2, 2, "{:<15} {:>10} {:>8} {}".format(
+                        pv_panel.addstr(j + 3, 2, "{:<15} {:>10} {:>8} {}".format(
                             pname, psize, lv_count, free))
                 else:
-                    pv_panel.addstr(1, 2, "No Physical Volume information available")
+                    pv_panel.addstr(10, 1, "[ waiting... ]")
+            
+            #---------------------------------------------
+            # Panel (Bottom half, right side)
+            #------------------------------------------------
             
             # Create Block Devices panel (right side, bottom half)
             block_dev_panel = stdscr.derwin(block_dev_height, pv_width, pv_height, vg_width)
@@ -599,8 +613,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             # Display block devices list
             if devices:
                 # Display header for block devices
-                block_dev_panel.addstr(1, 2, "{:<9} {:>16} {:>6} {:>8} {:>8} {:>7} {:>10}".format(
-                    "Device", "Size bin", "Unit", "Part", "Type", "F/S", "Flags"), curses.A_UNDERLINE)
+                block_dev_panel.addstr(2, 2, "{:<9} {:>16} {:>6} {:>8} {:>8} {:>9} {:>8}".format(
+                    "Device", "Size bin", "Unit", "Part", "Type", "FSinf", "Flags"), curses.A_UNDERLINE)
                 
                 # Calculate visible range based on panel size and current selection
                 visible_count = block_dev_height - 4  # Account for borders and header
@@ -608,7 +622,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 end_idx = min(start_idx + visible_count, len(devices))
                 
                 for i, dev in enumerate(devices[start_idx:end_idx]):
-                    y_pos = i + 2
+                    y_pos = i + 3
                     if y_pos >= block_dev_height - 1:
                         break
                     
@@ -644,17 +658,19 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                             if 'primary' in fdisk_id.lower() or 'primary' in gpt_flags.lower():
                                 part_type = 'Pri'
                             # Check for extended partition
+                            # Check for extended partition to set Part column
                             elif 'extended' in fdisk_id.lower() or 'extended' in gpt_flags.lower():
                                 part_type = 'Extd'
-                                # For extended partitions, set fs_info to "Extend" and flags_info to size
-                                fs_info = 'Extend'
-                                flags_info = device_size
                             # Check for logical partition
                             elif 'logical' in fdisk_id.lower() or 'logical' in gpt_flags.lower():
                                 part_type = 'Logi'
                             else:
                                 # Default to 'Pri' for regular partitions if type not detected
                                 part_type = 'Pri'
+
+                        # Set Flags to '---' if Unit='part' and Part='Extd', per latest feedback
+                        if dev_type_value == 'part' and part_type == 'Extd':
+                            flags_info = '---'
                         
                         if dev.get('gpt_part_table_type', 'N/A') != 'N/A':
                             disk_type = dev.get('gpt_part_table_type', 'N/A')
@@ -683,6 +699,10 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     if len(dev_type) > 6:
                         dev_type = dev_type[:5] + "."
                     
+                    # Uppercase 'lvm' in Flags column if present
+                    if flags_info == 'lvm':
+                        flags_info = 'LVM'
+                        
                     # Highlight if this is the selected block device
                     attr = curses.A_REVERSE if (i + start_idx == block_dev_selected and active_panel == 1) else 0
                     block_dev_panel.addstr(y_pos, 2, "{:<15} {:<12} {:<8} {:<8} {:<8} {:<8} {:<8}".format(
