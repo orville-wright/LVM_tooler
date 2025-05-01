@@ -301,7 +301,8 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
 
     current = 0  # Current selected device index
     block_dev_selected = 0  # Current selected block device index
-    active_panel = 0  # 0 = main, 1 = block devices
+    pv_selected = 0  # Current selected physical volume index
+    active_panel = 0  # 0 = main, 1 = physical volumes, 2 = block devices
     
     # Main UI loop
     while True:
@@ -543,12 +544,14 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 right.addstr(1, 2, f"No LVM info for {path}")
           
             #------------------------------------------------------------
-            # Panel (Top half, right side)    
+            # Panel (Top half, right side)
             # Create Physical Volumes panel (right side, top half)
             #------------------------------------------------------------
             pv_panel = stdscr.derwin(pv_height, pv_width, 0, vg_width)
             pv_panel.box()
-            pv_panel.addstr(0, 2, " Physical Volumes (PV) ")
+            # Highlight panel title when it has focus
+            title_attr = curses.A_BOLD if active_panel == 1 else 0
+            pv_panel.addstr(0, 2, " Physical Volumes (PV) ", title_attr)
             
             dev = devices[current] if devices else {}
             if isinstance(dev, dict):
@@ -581,6 +584,10 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 pv_panel.addstr(2, 2, "{:>2} {:>16} {:>8} {:>10}".format(
                     "Block dev", "Size bin", "LV #", "Free cap"), curses.A_UNDERLINE)
                 
+                # Ensure pv_selected stays within valid range
+                if pvs_in_vg:
+                    pv_selected = min(pv_selected, len(pvs_in_vg) - 1)
+                
                 for j, p in enumerate(pvs_in_vg):
                     if j >= pv_height - 2:
                         break
@@ -596,8 +603,10 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     
                     # Only write if we have space in the panel
                     if j + 2 < pv_height - 1:
+                        # Highlight the selected PV when this panel has focus
+                        attr = curses.A_REVERSE if (j == pv_selected and active_panel == 1) else 0
                         pv_panel.addstr(j + 3, 2, "{:<15} {:>10} {:>8} {}".format(
-                            pname, psize, lv_count, free))
+                            pname, psize, lv_count, free), attr)
                 else:
                     pv_panel.addstr(10, 1, "[ waiting... ]")
             
@@ -608,7 +617,9 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             # Create Block Devices panel (right side, bottom half)
             block_dev_panel = stdscr.derwin(block_dev_height, pv_width, pv_height, vg_width)
             block_dev_panel.box()
-            block_dev_panel.addstr(0, 2, " System Block Devices ")
+            # Highlight panel title when it has focus
+            title_attr = curses.A_BOLD if active_panel == 2 else 0
+            block_dev_panel.addstr(0, 2, " System Block Devices ", title_attr)
             
             # Display block devices list
             if devices:
@@ -704,7 +715,7 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         flags_info = 'LVM'
                         
                     # Highlight if this is the selected block device
-                    attr = curses.A_REVERSE if (i + start_idx == block_dev_selected and active_panel == 1) else 0
+                    attr = curses.A_REVERSE if (i + start_idx == block_dev_selected and active_panel == 2) else 0
                     block_dev_panel.addstr(y_pos, 2, "{:<15} {:<12} {:<8} {:<8} {:<8} {:<8} {:<8}".format(
                         name, size, dev_type, part_type, disk_type, fs_info, flags_info), attr)
             else:
@@ -716,15 +727,32 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             
             # Handle panel switching with Tab key
             if key == 9:  # Tab key
-                active_panel = 1 - active_panel
+                active_panel = (active_panel + 1) % 3  # Cycle through 0, 1, 2
             # Handle navigation in main panel
             elif active_panel == 0:
                 if key in (curses.KEY_UP, ord('k')) and current > 0:
                     current -= 1
                 elif key in (curses.KEY_DOWN, ord('j')) and current < len(devices) - 1:
                     current += 1
-            # Handle navigation in block devices panel
+            # Handle navigation in physical volumes panel
             elif active_panel == 1:
+                dev = devices[current] if devices else {}
+                if isinstance(dev, dict):
+                    path = dev.get('path')
+                else:
+                    path = dev
+                pv = pvs_map.get(path)
+                
+                if pv:
+                    vg_name = pv.get('vg_name')
+                    pvs_in_vg = [p for p in pvs_map.values() if p.get('vg_name') == vg_name]
+                    
+                    if key in (curses.KEY_UP, ord('k')) and pv_selected > 0:
+                        pv_selected -= 1
+                    elif key in (curses.KEY_DOWN, ord('j')) and pv_selected < len(pvs_in_vg) - 1:
+                        pv_selected += 1
+            # Handle navigation in block devices panel
+            elif active_panel == 2:
                 if key in (curses.KEY_UP, ord('k')) and block_dev_selected > 0:
                     block_dev_selected -= 1
                 elif key in (curses.KEY_DOWN, ord('j')) and block_dev_selected < len(devices) - 1:

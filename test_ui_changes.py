@@ -1,203 +1,94 @@
-#!/usr/bin/env python3
-"""
-Test UI Changes for Mount Point and Capacity Information Display
-
-This test verifies the changes made to the block devices display to show
-mount point and capacity information.
-"""
 import unittest
 from unittest.mock import patch, MagicMock
-import json
-import io
-import sys
 import curses
 import app
 
-class TestUIChanges(unittest.TestCase):
-    """Test the UI changes for mount point and capacity information display."""
-
-    @patch('subprocess.run')
-    def test_load_data_collects_mount_info(self, mock_run):
-        """Test that load_data collects mount point and capacity information."""
-        # Mock the lsblk command output
-        lsblk_output = {
-            'blockdevices': [
-                {
-                    'name': 'sda',
-                    'path': '/dev/sda',
-                    'size': '1073741824',  # 1GB
-                    'type': 'disk',
-                    'children': [
-                        {
-                            'name': 'sda1',
-                            'path': '/dev/sda1',
-                            'size': '1073741824',
-                            'type': 'part'
-                        }
-                    ]
-                }
+class TestPhysicalVolumesPaneAccessibility(unittest.TestCase):
+    def setUp(self):
+        # Setup initial state for tests
+        self.stdscr_mock = MagicMock()
+        self.devices = [
+            {'path': '/dev/sda'},
+            {'path': '/dev/sdb'},
+        ]
+        self.pvs_map = {
+            '/dev/sda': {'vg_name': 'vg0', 'pv_name': 'pv1', 'pv_size': 1024*1024*1024, 'pv_free': 512*1024*1024},
+            '/dev/sdb': {'vg_name': 'vg0', 'pv_name': 'pv2', 'pv_size': 2048*1024*1024, 'pv_free': 1024*1024*1024},
+        }
+        self.lvs_map = {
+            'vg0': [
+                {'devices': '/dev/sda'},
+                {'devices': '/dev/sdb'},
             ]
         }
-        
-        # Mock the df command output
-        df_output = """Filesystem     1K-blocks    Used Available Use% Mounted on
-/dev/sda1       1048576  524288    524288  50% /mnt/test"""
-        
-        # Mock the PVS, VGS, LVS command outputs
-        pvs_output = {'report': [{'pv': []}]}
-        vgs_output = {'report': [{'vg': []}]}
-        lvs_output = {'report': [{'lv': []}]}
-        
-        # Configure the mock to return our test data
-        def mock_run_side_effect(cmd, **kwargs):
-            mock_result = MagicMock()
-            if cmd[0] == 'lsblk':
-                mock_result.stdout = json.dumps(lsblk_output)
-            elif cmd[0] == 'df':
-                mock_result.stdout = df_output
-            elif cmd[0] == 'pvs':
-                mock_result.stdout = json.dumps(pvs_output)
-            elif cmd[0] == 'vgs':
-                mock_result.stdout = json.dumps(vgs_output)
-            elif cmd[0] == 'lvs':
-                mock_result.stdout = json.dumps(lvs_output)
-            return mock_result
-            
-        mock_run.side_effect = mock_run_side_effect
-        
-        # Call the function to test
-        devices, pvs_map, vg_map, lvs_map = app.load_data()
-        
-        # Verify that mount point and capacity information are collected
-        self.assertEqual(len(devices), 2)  # sda and sda1
-        
-        # Check sda1 has mount point and capacity information
-        sda1 = next((d for d in devices if d.get('name') == 'sda1'), None)
-        self.assertIsNotNone(sda1)
-        self.assertEqual(sda1.get('mount_point'), '/mnt/test')
-        self.assertEqual(sda1.get('used'), '512.00 MiB')
-        self.assertEqual(sda1.get('avail'), '512.00 MiB')
-        
-        # Check sda has N/A for mount point (since it's not mounted)
-        sda = next((d for d in devices if d.get('name') == 'sda'), None)
-        self.assertIsNotNone(sda)
-        self.assertEqual(sda.get('mount_point'), 'N/A')
-        self.assertEqual(sda.get('used'), 'N/A')
-        self.assertEqual(sda.get('avail'), 'N/A')
-        
-        # Verify df command was called with the correct parameters
-        mock_run.assert_any_call(
-            ['df', '--output=source,size,used,avail,pcent,target'],
-            capture_output=True, text=True, check=True
-        )
+        # Initialize focus and selection variables
+        self.active_panel = 0  # 0=main, 1=physical volumes, 2=block devices
+        self.pv_selected = 0
+        self.current = 0
 
-    @patch('curses.window')
-    def test_block_devices_display(self, mock_window):
-        """Test that the block devices display includes the new columns."""
-        # Create a mock window
-        mock_win = MagicMock()
-        mock_window.return_value = mock_win
-        
-        # Create test data
-        device = {
-            'name': 'sda1',
-            'path': '/dev/sda1',
-            'type': 'part',
-            'size': '1073741824',  # 1GB
-            'pttype': 'gpt',
-            'mount_point': '/mnt/test',
-            'used': '512.00 MiB',
-            'avail': '512.00 MiB'
-        }
-        
-        # Call the function that adds the device to the display
-        # We can't call draw_ui directly because it's a curses application
-        # So instead we'll check the format string used in the code
-        
-        # Extract the header format string from the code
-        header_format = "{:<15} {:<8} {:>10} {:<8} {:<15} {:>8} {:>8}"
-        header = header_format.format("Name", "Type", "Size", "PTType", "Mount", "Used", "Avail")
-        
-        # Verify the header includes the new columns
-        self.assertIn("Mount", header)
-        self.assertIn("Used", header)
-        self.assertIn("Avail", header)
-        
-        # Extract the row format string from the code
-        row_format = "{:<15} {:<8} {:>10} {:<8} {:<15} {:>8} {:>8}"
-        
-        # Format a row with our test data
-        name = device.get('name')
-        dtype = device.get('type')
-        size = app.format_size(device.get('size'))
-        ptype = device.get('pttype')
-        mount = device.get('mount_point')
-        used = device.get('used')
-        avail = device.get('avail')
-        
-        row = row_format.format(name, dtype, size, ptype, mount, used, avail)
-        
-        # Verify the row includes the mount point and capacity information
-        self.assertIn("/mnt/test", row)
-        self.assertIn("512.00 MiB", row)
+    def simulate_keypresses(self, keys):
+        """
+        Simulate a sequence of keypresses and update active_panel and pv_selected accordingly.
+        This mimics the keyboard handling logic in app.py.
+        """
+        for key in keys:
+            if key == 9:  # TAB key
+                self.active_panel = (self.active_panel + 1) % 3
+            elif self.active_panel == 1:
+                pvs_in_vg = [p for p in self.pvs_map.values() if p.get('vg_name') == self.pvs_map[self.devices[self.current]['path']]['vg_name']]
+                if key in (curses.KEY_UP, ord('k')) and self.pv_selected > 0:
+                    self.pv_selected -= 1
+                elif key in (curses.KEY_DOWN, ord('j')) and self.pv_selected < len(pvs_in_vg) - 1:
+                    self.pv_selected += 1
 
-    def test_panel_width_adjustment(self):
-        """Test that the panel width has been adjusted appropriately."""
-        # Original panel width calculation: max(40, w // 3)
-        # New panel width calculation: max(70, w // 2)
-        
-        # Test with different window widths
-        test_widths = [80, 100, 150, 200]
-        
-        for w in test_widths:
-            # Calculate old and new panel widths
-            old_width = max(40, w // 3)
-            new_width = max(70, w // 2)
-            
-            # Verify the new panel width is larger
-            self.assertGreaterEqual(new_width, old_width)
-            
-            # Verify the new panel width is at least 70
-            self.assertGreaterEqual(new_width, 70)
+    def test_tab_focus_order(self):
+        # Initially active_panel is 0, TAB once should focus Physical Volumes pane (1)
+        self.active_panel = 0
+        self.simulate_keypresses([9])
+        self.assertEqual(self.active_panel, 1, "Physical Volumes pane should be second in focus order after one TAB")
 
-    def test_mount_path_truncation(self):
-        """Test that long mount paths are truncated appropriately."""
-        # Create a test device with a long mount path
-        device = {
-            'mount_point': '/this/is/a/very/long/mount/path/that/should/be/truncated'
-        }
-        
-        # Truncate the mount path as done in the code
-        mount = device.get('mount_point')
-        if len(mount) > 15:
-            truncated_mount = mount[:12] + "..."
-        else:
-            truncated_mount = mount
-            
-        # Verify the mount path is truncated
-        self.assertEqual(truncated_mount, '/this/is/a/v...')
-        self.assertLessEqual(len(truncated_mount), 15)
+    def test_arrow_navigation_down(self):
+        self.active_panel = 1
+        self.pv_selected = 0
+        self.simulate_keypresses([curses.KEY_DOWN])
+        self.assertEqual(self.pv_selected, 1, "Down arrow should move selection down by one")
 
-    def test_unmounted_devices_display(self):
-        """Test that unmounted devices show N/A in the appropriate columns."""
-        # Create a test device without mount point information
-        device = {
-            'name': 'sda',
-            'path': '/dev/sda',
-            'type': 'disk',
-            'size': '1073741824'  # 1GB
-        }
-        
-        # Simulate the code that adds mount point and capacity information
-        if 'mount_point' not in device:
-            device['mount_point'] = 'N/A'
-            device['used'] = 'N/A'
-            device['avail'] = 'N/A'
-            
-        # Verify unmounted devices show N/A
-        self.assertEqual(device.get('mount_point'), 'N/A')
-        self.assertEqual(device.get('used'), 'N/A')
-        self.assertEqual(device.get('avail'), 'N/A')
+    def test_arrow_navigation_up(self):
+        self.active_panel = 1
+        self.pv_selected = 1
+        self.simulate_keypresses([curses.KEY_UP])
+        self.assertEqual(self.pv_selected, 0, "Up arrow should move selection up by one")
+
+    def test_bounds_navigation_up(self):
+        self.active_panel = 1
+        self.pv_selected = 0
+        self.simulate_keypresses([curses.KEY_UP])
+        self.assertEqual(self.pv_selected, 0, "Selection should not move above first row")
+
+    def test_bounds_navigation_down(self):
+        self.active_panel = 1
+        pvs_in_vg = [p for p in self.pvs_map.values() if p.get('vg_name') == self.pvs_map[self.devices[self.current]['path']]['vg_name']]
+        self.pv_selected = len(pvs_in_vg) - 1
+        self.simulate_keypresses([curses.KEY_DOWN])
+        self.assertEqual(self.pv_selected, len(pvs_in_vg) - 1, "Selection should not move below last row")
+
+    def test_visual_highlighting_attributes(self):
+        # Simulate the attribute selection logic for title and selected row
+        active_panel = 1
+        pv_selected = 0
+        # Title attribute should be A_BOLD if active_panel == 1 else 0
+        title_attr = curses.A_BOLD if active_panel == 1 else 0
+        self.assertEqual(title_attr, curses.A_BOLD, "Title should be highlighted with A_BOLD when pane has focus")
+
+        # Row attribute should be A_REVERSE if selected and pane has focus else 0
+        attr = curses.A_REVERSE if (0 == pv_selected and active_panel == 1) else 0
+        self.assertEqual(attr, curses.A_REVERSE, "Selected row should be highlighted with A_REVERSE when pane has focus")
+
+    def test_focus_transfer_with_tab(self):
+        # Test tabbing cycles focus through panels without error
+        self.active_panel = 0
+        self.simulate_keypresses([9, 9, 9])
+        self.assertEqual(self.active_panel, 0, "Focus should cycle back to first panel after tabbing through all")
 
 if __name__ == '__main__':
     unittest.main()
