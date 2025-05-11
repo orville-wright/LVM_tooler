@@ -1,49 +1,65 @@
-# LVM Browser User Guide: Navigating the Enhanced UI
+# LVM Browser
 
-## Introduction
+An interactive terminal-based application for browsing and inspecting Logical Volume Manager (LVM) configuration on Linux systems.
 
-This guide covers the recent enhancements to the LVM Browser user interface. The primary change involves a new split-panel layout on the right side, designed to provide simultaneous visibility into Physical Volumes (PVs) and Block Devices. Navigation has also been streamlined for efficient switching and movement between these panels. This :Pattern facilitates easier correlation between the PV :Context and the underlying Block Device :Context.
+![LVM Browser Screenshot](https://example.com/screenshot.png)
 
-## New UI Layout: Split Right Panel
+## About
 
-The LVM Browser window is now organized as follows:
+LVM Browser provides a comprehensive view of Volume Groups, Logical Volumes, and Physical Volumes using a curses-based user interface. It allows system administrators to easily visualize and explore their LVM configurations through an intuitive multi-panel interface.
 
-*   **Left Panel:** Displays the list of Volume Groups (VGs). This panel remains unchanged.
-*   **Right Panel:** This area is now vertically split into two distinct sections:
-    *   **Upper Section (Physical Volumes):** Shows detailed information about the Physical Volumes associated with the selected Volume Group.
-    *   **Lower Section (Block Devices):** Lists the underlying Block Devices related to the selected components.
+## Features
 
-This :Solution allows users to view PV details and the corresponding Block Devices side-by-side, improving workflow efficiency when analyzing LVM configurations.
+- Real-time scanning and detection of block devices and LVM components
+- Multi-panel interface showing Volume Groups, Physical Volumes, and Block Devices
+- Detailed information display for all LVM components
+- Interactive keyboard navigation between panels and components
+- Responsive design that adapts to terminal window size
+- Robust error handling for reliable operation in various environments
 
-## Navigation Controls
+## Installation
 
-Navigating the new interface is primarily done using the keyboard:
+### Prerequisites
 
-*   **`Tab` Key:**
-    *   Toggles focus between the **Physical Volumes** (upper right) panel and the **Block Devices** (lower right) panel.
-    *   The active panel will typically be indicated by a highlighted border or cursor position.
-*   **Arrow Keys (`Up Arrow`, `Down Arrow`, `Left Arrow`, `Right Arrow`):**
-    *   Used for navigation *within* the currently active panel.
-    *   When the **Physical Volumes** panel is active, arrows might navigate between different PVs or fields (depending on specific implementation).
-    *   When the **Block Devices** panel is active, the `Up Arrow` and `Down Arrow` keys are used to scroll through the list of block devices.
+- Python 3.6+
+- Administrative privileges (required to read device information)
+- LVM tools (`lvm2` package)
 
-## Using the Split Panel View Effectively
+### Quick Start
 
-Here are some examples of how to leverage the new layout:
+1. Clone this repository or download `app.py`
+2. Make the script executable:
+   ```bash
+   chmod +x app.py
+   ```
+3. Run with appropriate permissions:
+   ```bash
+   sudo ./app.py
+   ```
 
-1.  **Correlating PVs and Block Devices:**
-    *   Select a Volume Group in the left panel.
-    *   Observe the PVs listed in the upper right panel.
-    *   Press `Tab` to switch focus to the Block Devices panel.
-    *   Use the `Down Arrow` key to scroll through the block devices and identify those associated with the PVs shown above.
-2.  **Quickly Switching Context:**
-    *   While examining PV details in the upper right panel, press `Tab` to instantly switch focus to the Block Devices list for further investigation.
-    *   Press `Tab` again to return focus to the PV panel.
+## Usage
 
-## Keyboard Shortcuts Summary
+Navigate the interface using:
+- **Tab**: Cycle between panels
+- **Up/Down** or **k/j**: Navigate within a panel
+- **q or ESC**: Exit the application
 
-*   **`Tab`**: Switch focus between Physical Volumes panel and Block Devices panel.
-*   **`Up Arrow` / `Down Arrow`**: Navigate items within the active panel (especially useful for the Block Devices list).
-*   **`Left Arrow` / `Right Arrow`**: Navigate elements/fields within the active panel (behavior might vary).
+## Documentation
 
-This enhanced UI aims to provide a more integrated and efficient experience for managing LVM structures.
+For detailed information, see the following documentation:
+
+- [LVM Browser User Guide](lvm_browser_guide.md) - Complete guide to installing, using, and troubleshooting the application
+- [LVM Concepts](lvm_concepts.md) - Explanation of LVM concepts and how they relate to the browser display
+- [Curses Error Handling](curses_error_handling.md) - Technical details about the curses error handling implementation
+
+## Error Handling
+
+The application includes comprehensive error handling to manage display issues gracefully. If you encounter the error "Curses error: addwstr() returned ERR", simply resize your terminal to a larger size. The application will handle text that doesn't fit on the screen without crashing.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

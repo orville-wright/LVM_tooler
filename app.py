@@ -1,4 +1,5 @@
-#! python3
+#! /usr/bin/env /usr/bin/python3
+
 """
 Interactive LVM Browser
 
