@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! python3
 """
 Interactive LVM Browser
 
@@ -345,7 +345,10 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 # Check if the selected device is a logical volume
                 if dev.get('type') == 'lvm':
                     # Display LV information directly
-                    right.addstr(0, 2, f" Logical Volume Information ")
+                    try:
+                        right.addstr(0, 2, f" Logical Volume Information ")
+                    except curses.error:
+                        pass
                     
                     # Extract VG and LV names from path
                     # Handle both path formats: /dev/VGName/LVName and /dev/mapper/VGName-LVName
@@ -366,19 +369,27 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                             lv_name = '/'.join(parts[1:])  # Handle LV names with slashes
                     
                     # Display basic information
-                    right.addstr(2, 2, f"Device: {path}")
-                    right.addstr(3, 2, f"VG Name: {vg_name if vg_name else 'Unknown'}")
-                    right.addstr(4, 2, f"LV Name: {lv_name if lv_name else 'Unknown'}")
-                    right.addstr(5, 2, f"Size: {format_size(dev.get('size', 'N/A'))}")
+                    try:
+                        right.addstr(2, 2, f"Device: {path}")
+                        right.addstr(3, 2, f"VG Name: {vg_name if vg_name else 'Unknown'}")
+                        right.addstr(4, 2, f"LV Name: {lv_name if lv_name else 'Unknown'}")
+                        right.addstr(5, 2, f"Size: {format_size(dev.get('size', 'N/A'))}")
+                    except curses.error:
+                        # Skip if we can't write the information
+                        pass
                     
                     # Display mount point information
                     mount_point = dev.get('mount_point', 'N/A')
                     used = dev.get('used', 'N/A')
                     available = dev.get('avail', 'N/A')
                     
-                    right.addstr(7, 2, f"Mounted: {mount_point}")
-                    right.addstr(8, 2, f"Used: {used}")
-                    right.addstr(9, 2, f"Available: {available}")
+                    try:
+                        right.addstr(7, 2, f"Mounted: {mount_point}")
+                        right.addstr(8, 2, f"Used: {used}")
+                        right.addstr(9, 2, f"Available: {available}")
+                    except curses.error:
+                        # Skip if we can't write the information
+                        pass
                     
                     # Mark that we've displayed information
                     info_displayed = True
@@ -399,7 +410,15 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     display_vg_name = vg_name
                     if vg_name and len(vg_name) > vg_width - 15:
                         display_vg_name = vg_name[:vg_width - 18] + "..."
-                    right.addstr(0, 2, f" Volume Group - {display_vg_name} ({vg_size}) ")
+                    try:
+                        header_text = f" Volume Group - {display_vg_name} ({vg_size}) "
+                        # Make sure the header isn't too long
+                        if len(header_text) > vg_width - 4:
+                            header_text = header_text[:vg_width - 7] + "... "
+                        right.addstr(0, 2, header_text)
+                    except curses.error:
+                        # Skip if we can't write the header
+                        pass
                     
                     vg_free_formatted = format_size(vg.get('vg_free')) if vg.get('vg_free') else 'N/A'
                     
@@ -418,14 +437,29 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     vg_pe_size = vg.get('vg_extent_size', 'N/A')
                     vg_pe_size_formatted = format_size(vg_pe_size) if vg_pe_size != 'N/A' else 'N/A'
                     
-                    right.addstr(2, 2, f"VG Format:     {fmt}")
-                    right.addstr(3, 2, f"VG seg size: {vg_pe_size_formatted}")
-                    right.addstr(4, 2, f"Logical Vols:  {lv_names_str}")
-                    right.addstr(5, 2, f"Free space:   {vg_free_formatted}")
+                    try:
+                        right.addstr(2, 2, f"VG Format:     {fmt}"[:vg_width - 4])
+                    except curses.error:
+                        pass
+                    try:
+                        right.addstr(3, 2, f"VG seg size: {vg_pe_size_formatted}"[:vg_width - 4])
+                    except curses.error:
+                        pass
+                    try:
+                        right.addstr(4, 2, f"Logical Vols:  {lv_names_str}"[:vg_width - 4])
+                    except curses.error:
+                        pass
+                    try:
+                        right.addstr(5, 2, f"Free space:   {vg_free_formatted}"[:vg_width - 4])
+                    except curses.error:
+                        pass
                     
                     # Only add header if we have vertical space
                     if h > 7:
-                        right.addstr(7, 2, "[ Discovered LVols.. ]", curses.A_BOLD)
+                        try:
+                            right.addstr(7, 2, "[ Discovered LVols.. ]", curses.A_BOLD)
+                        except curses.error:
+                            pass
                     y = 9
                     # Group Logical Volumes by name
                     lv_groups = {}
@@ -437,7 +471,15 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                             break
                         # Truncate name if too long to prevent boundary errors
                         display_name = name[:vg_width-20] + '...' if len(name) > vg_width-17 else name
-                        right.addstr(y, 2, f"Logical Volume: {display_name}", curses.A_BOLD)
+                        try:
+                            lv_text = f"Logical Volume: {display_name}"
+                            # Check if the text would fit in the window
+                            if len(lv_text) > vg_width - 4:
+                                lv_text = lv_text[:vg_width - 7] + "..."
+                            right.addstr(y, 2, lv_text, curses.A_BOLD)
+                        except curses.error:
+                            # Skip if we can't write this line
+                            pass
                         y += 1
                 # We need to ensure the PV display still works correctly
                 # This section was removed because it duplicated code, but we need to make sure
@@ -450,7 +492,15 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     display_vg_name = vg_name
                     if vg_name and len(vg_name) > vg_width - 15:
                         display_vg_name = vg_name[:vg_width - 18] + "..."
-                    right.addstr(0, 2, f" Volume Group - {display_vg_name} ({vg_size}) ")
+                    try:
+                        header_text = f" Volume Group - {display_vg_name} ({vg_size}) "
+                        # Make sure the header isn't too long
+                        if len(header_text) > vg_width - 4:
+                            header_text = header_text[:vg_width - 7] + "... "
+                        right.addstr(0, 2, header_text)
+                    except curses.error:
+                        # Skip if we can't write the header
+                        pass
                     
                     vg_free_formatted = format_size(vg.get('vg_free')) if vg.get('vg_free') else 'N/A'
                     
@@ -468,14 +518,29 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     vg_pe_size = vg.get('vg_extent_size', 'N/A')
                     vg_pe_size_formatted = format_size(vg_pe_size) if vg_pe_size != 'N/A' else 'N/A'
                     
-                    right.addstr(2, 2, f"VG Format:     {fmt}")
-                    right.addstr(3, 2, f"VG seg size: {vg_pe_size_formatted}")
-                    right.addstr(4, 2, f"Logical Vols:  {lv_names_str}")
-                    right.addstr(5, 2, f"Free space:   {vg_free_formatted}")
+                    try:
+                        right.addstr(2, 2, f"VG Format:     {fmt}"[:vg_width - 4])
+                    except curses.error:
+                        pass
+                    try:
+                        right.addstr(3, 2, f"VG seg size: {vg_pe_size_formatted}"[:vg_width - 4])
+                    except curses.error:
+                        pass
+                    try:
+                        right.addstr(4, 2, f"Logical Vols:  {lv_names_str}"[:vg_width - 4])
+                    except curses.error:
+                        pass
+                    try:
+                        right.addstr(5, 2, f"Free space:   {vg_free_formatted}"[:vg_width - 4])
+                    except curses.error:
+                        pass
                     
                     # Only add header if we have vertical space
                     if h > 7:
-                        right.addstr(7, 2, "[ Discovered LVols.. ]", curses.A_BOLD)
+                        try:
+                            right.addstr(7, 2, "[ Discovered LVols.. ]", curses.A_BOLD)
+                        except curses.error:
+                            pass
                     y = 9
                     # Group Logical Volumes by name
                     lv_groups = {}
@@ -487,7 +552,15 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                             break
                         # Truncate name if too long to prevent boundary errors
                         display_name = name[:vg_width-20] + '...' if len(name) > vg_width-17 else name
-                        right.addstr(y, 2, f"Logical Volume: {display_name}", curses.A_BOLD)
+                        try:
+                            lv_text = f"Logical Volume: {display_name}"
+                            # Check if the text would fit in the window
+                            if len(lv_text) > vg_width - 4:
+                                lv_text = lv_text[:vg_width - 7] + "..."
+                            right.addstr(y, 2, lv_text, curses.A_BOLD)
+                        except curses.error:
+                            # Skip if we can't write this line
+                            pass
                         y += 1
                         
                         # Add mount point and capacity information
@@ -521,14 +594,29 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                                     break
                         
                         # Display additional information
-                        right.addstr(y, 4, f"Mounted: {mount_point}")
-                        y += 1
-                        right.addstr(y, 4, f"Capacity: {capacity}")
-                        y += 1
-                        right.addstr(y, 4, f"Used: {used}")
-                        y += 1
-                        right.addstr(y, 4, f"Available: {available}")
-                        y += 1
+                        try:
+                            right.addstr(y, 4, f"Mounted: {mount_point}"[:vg_width - 6])
+                            y += 1
+                        except curses.error:
+                            pass
+                        
+                        try:
+                            right.addstr(y, 4, f"Capacity: {capacity}"[:vg_width - 6])
+                            y += 1
+                        except curses.error:
+                            pass
+                        
+                        try:
+                            right.addstr(y, 4, f"Used: {used}"[:vg_width - 6])
+                            y += 1
+                        except curses.error:
+                            pass
+                        
+                        try:
+                            right.addstr(y, 4, f"Available: {available}"[:vg_width - 6])
+                            y += 1
+                        except curses.error:
+                            pass
                         
                         # Add blank line before tabular data
                         y += 1
@@ -536,8 +624,17 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         # Ensure we don't write outside window boundaries
                         if y >= h - 2:
                             break
-                        right.addstr(y, 4, "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
-                            "LE Start", "LE End", "PE Count", "PE Size", "PVs", "PE Start"), curses.A_UNDERLINE)
+                        try:
+                            formatted_header = "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
+                                "LE Start", "LE End", "PE Count", "PE Size", "PVs", "PE Start")
+                            # Ensure we don't write beyond window width
+                            max_line_width = vg_width - 6  # Allow for borders and margin
+                            if len(formatted_header) > max_line_width:
+                                formatted_header = formatted_header[:max_line_width]
+                            right.addstr(y, 4, formatted_header, curses.A_UNDERLINE)
+                        except curses.error:
+                            # Skip if we can't write the header (probably out of bounds)
+                            pass
                         y += 1
                         for lv in group:
                             if y >= h - 2:  # Check against full screen height
@@ -654,13 +751,27 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                             max_dev_width = vg_width - 60  # Reserve space for other columns
                             if len(clean_pvlist) > max_dev_width:
                                 clean_pvlist = clean_pvlist[:max_dev_width-3] + "..."
-                                
-                            right.addstr(y, 4, "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
-                                le_start, le_end, str(pe_count), pe_size, clean_pvlist, pe_start_info))
+                            
+                            # Format string with boundary check
+                            try:
+                                formatted_str = "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
+                                    le_start, le_end, str(pe_count), pe_size, clean_pvlist, pe_start_info)
+                                # Ensure we don't write beyond window width
+                                max_line_width = vg_width - 6  # Allow for borders and margin
+                                if len(formatted_str) > max_line_width:
+                                    formatted_str = formatted_str[:max_line_width]
+                                right.addstr(y, 4, formatted_str)
+                            except curses.error:
+                                # Skip this line if we can't write it (probably out of bounds)
+                                pass
                             y += 1
                         y += 1
                     else:
-                        right.addstr(1, 2, f"No LVM info for {path}")
+                        try:
+                            right.addstr(1, 2, f"No LVM info for {path}")
+                        except curses.error:
+                            # Skip if we can't write the message
+                            pass
                     
                     # Add mount point and capacity information
                     # Find the device path for this logical volume
@@ -693,14 +804,18 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                                 break
                     
                     # Display additional information
-                    right.addstr(y, 4, f"Mounted: {mount_point}")
-                    y += 1
-                    right.addstr(y, 4, f"Capacity: {capacity}")
-                    y += 1
-                    right.addstr(y, 4, f"Used: {used}")
-                    y += 1
-                    right.addstr(y, 4, f"Available: {available}")
-                    y += 1
+                    try:
+                        right.addstr(y, 4, f"Mounted: {mount_point}")
+                        y += 1
+                        right.addstr(y, 4, f"Capacity: {capacity}")
+                        y += 1
+                        right.addstr(y, 4, f"Used: {used}")
+                        y += 1
+                        right.addstr(y, 4, f"Available: {available}")
+                        y += 1
+                    except curses.error:
+                        # Skip if we can't write the information
+                        pass
                     
                     # Add blank line before tabular data
                     y += 1
@@ -708,8 +823,17 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     # Ensure we don't write outside window boundaries
                     if y >= h - 2:
                         break
-                    right.addstr(y, 4, "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
-                        "LE Start", "LE End", "PE Count", "PE Size", "PVs", "PE Start"), curses.A_UNDERLINE)
+                    try:
+                        formatted_header = "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
+                            "LE Start", "LE End", "PE Count", "PE Size", "PVs", "PE Start")
+                        # Ensure we don't write beyond window width
+                        max_line_width = vg_width - 6  # Allow for borders and margin
+                        if len(formatted_header) > max_line_width:
+                            formatted_header = formatted_header[:max_line_width]
+                        right.addstr(y, 4, formatted_header, curses.A_UNDERLINE)
+                    except curses.error:
+                        # Skip if we can't write the header (probably out of bounds)
+                        pass
                     y += 1
                     for lv in group:
                         if y >= h - 2:  # Check against full screen height
@@ -826,9 +950,19 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         max_dev_width = vg_width - 60  # Reserve space for other columns
                         if len(clean_pvlist) > max_dev_width:
                             clean_pvlist = clean_pvlist[:max_dev_width-3] + "..."
-                            
-                        right.addstr(y, 4, "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
-                            le_start, le_end, str(pe_count), pe_size, clean_pvlist, pe_start_info))
+                        
+                        # Format string with boundary check
+                        try:
+                            formatted_str = "{:<10} {:<10} {:>10} {:>10} {:<20} {}".format(
+                                le_start, le_end, str(pe_count), pe_size, clean_pvlist, pe_start_info)
+                            # Ensure we don't write beyond window width
+                            max_line_width = vg_width - 6  # Allow for borders and margin
+                            if len(formatted_str) > max_line_width:
+                                formatted_str = formatted_str[:max_line_width]
+                            right.addstr(y, 4, formatted_str)
+                        except curses.error:
+                            # Skip this line if we can't write it (probably out of bounds)
+                            pass
                         y += 1
                     y += 1
             else:
@@ -842,7 +976,11 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             pv_panel.box()
             # Highlight panel title when it has focus
             title_attr = curses.A_BOLD if active_panel == 1 else 0
-            pv_panel.addstr(0, 2, " Physical Volumes (PV) ", title_attr)
+            try:
+                pv_panel.addstr(0, 2, " Physical Volumes (PV) ", title_attr)
+            except curses.error:
+                # Skip if we can't write the header (probably out of bounds)
+                pass
             
             dev = devices[current] if devices else {}
             if isinstance(dev, dict):
@@ -872,8 +1010,17 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                 # Table headers
                 # Display PV info in the new panel
                 #----------------------------------------------
-                pv_panel.addstr(2, 2, "{:>2} {:>16} {:>8} {:>10}".format(
-                    "Block dev", "Size bin", "LV #", "Free cap"), curses.A_UNDERLINE)
+                try:
+                    formatted_header = "{:>2} {:>16} {:>8} {:>10}".format(
+                        "Block dev", "Size bin", "LV #", "Free cap")
+                    # Ensure we don't write beyond window width
+                    max_width = pv_width - 4  # Allow for borders and margin
+                    if len(formatted_header) > max_width:
+                        formatted_header = formatted_header[:max_width]
+                    pv_panel.addstr(2, 2, formatted_header, curses.A_UNDERLINE)
+                except curses.error:
+                    # Skip if we can't write the header
+                    pass
                 
                 # Ensure pv_selected stays within valid range
                 if pvs_in_vg:
@@ -896,15 +1043,37 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     if j + 2 < pv_height - 1:
                         # Highlight the selected PV when this panel has focus
                         attr = curses.A_REVERSE if (j == pv_selected and active_panel == 1) else 0
-                        pv_panel.addstr(j + 3, 2, "{:<15} {:>10} {:>8} {}".format(
-                            pname, psize, lv_count, free), attr)
+                        try:
+                            formatted_str = "{:<15} {:>10} {:>8} {}".format(
+                                pname, psize, lv_count, free)
+                            # Ensure we don't write beyond window width
+                            max_width = pv_width - 4  # Allow for borders and margin
+                            if len(formatted_str) > max_width:
+                                formatted_str = formatted_str[:max_width]
+                            pv_panel.addstr(j + 3, 2, formatted_str, attr)
+                        except curses.error:
+                            # Skip this line if we can't write it
+                            pass
                 else:
-                    pv_panel.addstr(10, 1, "[ waiting... ]")
+                    try:
+                        pv_panel.addstr(10, 1, "[ waiting... ]")
+                    except curses.error:
+                        # Skip if we can't write the message
+                        pass
             else:
                 # If no PV is found for the selected device, display all PVs in the system
                 # This ensures the PV panel always shows something, even if the selected device isn't a PV
-                pv_panel.addstr(2, 2, "{:>2} {:>16} {:>8} {:>10}".format(
-                    "Block dev", "Size bin", "LV #", "Free cap"), curses.A_UNDERLINE)
+                try:
+                    formatted_header = "{:>2} {:>16} {:>8} {:>10}".format(
+                        "Block dev", "Size bin", "LV #", "Free cap")
+                    # Ensure we don't write beyond window width
+                    max_width = pv_width - 4  # Allow for borders and margin
+                    if len(formatted_header) > max_width:
+                        formatted_header = formatted_header[:max_width]
+                    pv_panel.addstr(2, 2, formatted_header, curses.A_UNDERLINE)
+                except curses.error:
+                    # Skip if we can't write the header
+                    pass
                 
                 # Display all PVs in the system
                 for j, (pv_path, p) in enumerate(pvs_map.items()):
@@ -926,8 +1095,17 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                     
                     # Only write if we have space in the panel
                     if j + 2 < pv_height - 1:
-                        pv_panel.addstr(j + 3, 2, "{:<15} {:>10} {:>8} {}".format(
-                            pname, psize, vg, free))
+                        try:
+                            formatted_str = "{:<15} {:>10} {:>8} {}".format(
+                                pname, psize, vg, free)
+                            # Ensure we don't write beyond window width
+                            max_width = pv_width - 4  # Allow for borders and margin
+                            if len(formatted_str) > max_width:
+                                formatted_str = formatted_str[:max_width]
+                            pv_panel.addstr(j + 3, 2, formatted_str)
+                        except curses.error:
+                            # Skip this line if we can't write it
+                            pass
             
             #---------------------------------------------
             # Panel (Bottom half, right side)
@@ -938,13 +1116,26 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             block_dev_panel.box()
             # Highlight panel title when it has focus
             title_attr = curses.A_BOLD if active_panel == 2 else 0
-            block_dev_panel.addstr(0, 2, " System Block Devices ", title_attr)
+            try:
+                block_dev_panel.addstr(0, 2, " System Block Devices ", title_attr)
+            except curses.error:
+                # Skip if we can't write the header (probably out of bounds)
+                pass
             
             # Display block devices list
             if devices:
                 # Display header for block devices
-                block_dev_panel.addstr(2, 2, "{:<9} {:>16} {:>6} {:>8} {:>8} {:>9} {:>8}".format(
-                    "Device", "Size bin", "Unit", "Part", "Type", "FSinf", "Flags"), curses.A_UNDERLINE)
+                try:
+                    formatted_header = "{:<9} {:>16} {:>6} {:>8} {:>8} {:>9} {:>8}".format(
+                        "Device", "Size bin", "Unit", "Part", "Type", "FSinf", "Flags")
+                    # Ensure we don't write beyond window width
+                    max_width = pv_width - 4  # Allow for borders and margin
+                    if len(formatted_header) > max_width:
+                        formatted_header = formatted_header[:max_width]
+                    block_dev_panel.addstr(2, 2, formatted_header, curses.A_UNDERLINE)
+                except curses.error:
+                    # Skip if we can't write the header
+                    pass
                 
                 # Calculate visible range based on panel size and current selection
                 visible_count = block_dev_height - 4  # Account for borders and header
@@ -1035,10 +1226,25 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
                         
                     # Highlight if this is the selected block device
                     attr = curses.A_REVERSE if (i + start_idx == block_dev_selected and active_panel == 2) else 0
-                    block_dev_panel.addstr(y_pos, 2, "{:<15} {:<12} {:<8} {:<8} {:<8} {:<8} {:<8}".format(
-                        name, size, dev_type, part_type, disk_type, fs_info, flags_info), attr)
+                    
+                    # Format string safely (with boundary checks)
+                    try:
+                        formatted_str = "{:<15} {:<12} {:<8} {:<8} {:<8} {:<8} {:<8}".format(
+                            name, size, dev_type, part_type, disk_type, fs_info, flags_info)
+                        # Ensure we don't write beyond window width
+                        max_width = pv_width - 4  # Allow for borders and margin
+                        if len(formatted_str) > max_width:
+                            formatted_str = formatted_str[:max_width]
+                        block_dev_panel.addstr(y_pos, 2, formatted_str, attr)
+                    except curses.error:
+                        # Safely handle any curses errors during writing
+                        pass
             else:
-                block_dev_panel.addstr(1, 2, "No block devices available")
+                try:
+                    block_dev_panel.addstr(1, 2, "No block devices available")
+                except curses.error:
+                    # Skip if we can't write the message
+                    pass
 
             # Refresh screen and handle keyboard input
             stdscr.refresh()
@@ -1086,8 +1292,21 @@ def draw_ui(stdscr, devices, pvs_map, vg_map, lvs_map):
             stdscr.clear()
             error_msg = f"Curses error: {str(e)}"
             try:
-                stdscr.addstr(0, 0, error_msg[:w-1])
-                stdscr.addstr(1, 0, "Press any key to retry, 'q' to quit")
+                # Get current dimensions to ensure we don't exceed bounds
+                h, w = stdscr.getmaxyx()
+                # Truncate error message if needed
+                if len(error_msg) >= w:
+                    error_msg = error_msg[:w-1]
+                
+                stdscr.addstr(0, 0, error_msg)
+                
+                # Add instructions on next line
+                if h > 1:  # Make sure we have at least 2 rows
+                    instruction = "Press any key to retry, 'q' to quit"
+                    if len(instruction) >= w:
+                        instruction = instruction[:w-1]
+                    stdscr.addstr(1, 0, instruction)
+                
                 stdscr.refresh()
                 key = stdscr.getch()
                 if key in (ord('q'), 27):  # q or ESC to quit
